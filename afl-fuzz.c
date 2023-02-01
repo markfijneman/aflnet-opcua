@@ -397,6 +397,8 @@ u8 false_negative_reduction = 0;
 Agraph_t  *ipsm;
 static FILE* ipsm_dot_file;
 
+char* message_sent;
+
 /* Hash table/map and list */
 klist_t(lms) *kl_messages;
 khash_t(hs32) *khs_ipsm_paths;
@@ -522,6 +524,7 @@ void update_region_annotations(struct queue_entry* q)
   u32 i = 0;
 
   for (i = 0; i < messages_sent; i++) {
+    // printf("\n[DEBUG] %s -> %s ",q->)
     if ((response_bytes[i] == 0) || ( i > 0 && (response_bytes[i] - response_bytes[i - 1] == 0))) {
       q->regions[i].state_sequence = NULL;
       q->regions[i].state_count = 0;
@@ -764,37 +767,45 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
   int discard, i;
   state_info_t *state;
   unsigned int state_count;
-
+  
+  
+  
   if (!response_buf_size || !response_bytes) return;
 
   unsigned int *state_sequence = (*extract_response_codes)(response_buf, response_buf_size, &state_count);
 
   q->unique_state_count = get_unique_state_count(state_sequence, state_count);
-
+  
+  
   if (is_state_sequence_interesting(state_sequence, state_count)) {
     //Save the current kl_messages to a file which can be used to replay the newly discovered paths on the ipsm
     u8 *temp_str = state_sequence_to_string(state_sequence, state_count);
     u8 *fname = alloc_printf("%s/replayable-new-ipsm-paths/id:%s:%s", out_dir, temp_str, dry_run ? basename(q->fname) : "new");
     save_kl_messages_to_file(kl_messages, fname, 1, messages_sent);
+  
     ck_free(temp_str);
     ck_free(fname);
-
+    
     //Update the IPSM graph
     if (state_count > 1) {
       unsigned int prevStateID = state_sequence[0];
 
       for(i=1; i < state_count; i++) {
+        
         unsigned int curStateID = state_sequence[i];
+        
         char fromState[STATE_STR_LEN], toState[STATE_STR_LEN];
         snprintf(fromState, STATE_STR_LEN, "%d", prevStateID);
         snprintf(toState, STATE_STR_LEN, "%d", curStateID);
-
+        
+        
         //Check if the prevStateID and curStateID have been added to the state machine as vertices
         //Check also if the edge prevStateID->curStateID has been added
         Agnode_t *from, *to;
 		    Agedge_t *edge;
 		    from = agnode(ipsm, fromState, FALSE);
 		    if (!from) {
+          
           //Add a node to the graph
           from = agnode(ipsm, fromState, TRUE);
           if (dry_run) agset(from,"color","blue");
@@ -812,6 +823,8 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
           newState_From->selected_seed_index = 0;
           newState_From->seeds = NULL;
           newState_From->seeds_count = 0;
+          
+          
 
           k = kh_put(hms, khms_states, prevStateID, &discard);
           kh_value(khms_states, k) = newState_From;
@@ -829,7 +842,7 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
           to = agnode(ipsm, toState, TRUE);
           if (dry_run) agset(to,"color","blue");
           else agset(to,"color","red");
-
+          
           //Insert this newly discovered state into the states hashtable
           state_info_t *newState_To = (state_info_t *) ck_alloc (sizeof(state_info_t));
           newState_To->id = curStateID;
@@ -843,7 +856,10 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
           newState_To->seeds = NULL;
           newState_To->seeds_count = 0;
 
+          
+          
           k = kh_put(hms, khms_states, curStateID, &discard);
+
           kh_value(khms_states, k) = newState_To;
 
           //Insert this into the state_ids array too
@@ -851,20 +867,75 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
           state_ids[state_ids_count++] = curStateID;
 
           if (curStateID != 0) expand_was_fuzzed_map(1, 0);
+          
         }
-
+        
         //Check if an edge from->to exists
 		    edge = agedge(ipsm, from, to, NULL, FALSE);
-		    if (!edge) {
-          //Add an edge to the graph
-			    edge = agedge(ipsm, from, to, "new_edge", TRUE);
-          if (dry_run) agset(edge, "color", "blue");
-          else agset(edge, "color", "red");
-		    }
+        
+          if (!edge) {
+            
+            char *label_;
+            int important_index=-1;
+            // printf("\nNew edge:%s->%s\n", agnameof(from),agnameof(to));
+            for(int i=0;i<state_count;i++){
+              if(state_sequence[i]==atoi(agnameof(from))){
+                important_index=i;
+              }
+            }
 
+            // printf("\n[DEBUG]Messages.");
+            // for (kliter_t(lms) *it = kl_begin(kl_messages);it!=kl_end(kl_messages);it = kl_next(it)){
+            //   printf("%s-",kl_val(it)->mdata);
+            // }
+            // printf("\n[DEBUG]End messages.");
+            
+            //moving the official kl_message to a support structure (adding empty at the head) 
+            char** tmp_vector = (char**)malloc(sizeof(char*)*(messages_sent+1));
+            label_="";
+            kliter_t(lms) *it = kl_begin(kl_messages);
+            for (int i=0;i<messages_sent+1;i++){
+              
+                if(i==0){
+                  tmp_vector[i] = malloc(sizeof(char)*7);
+                  strcpy(tmp_vector[i], "empty");
+                }
+                else{
+                  tmp_vector[i]=malloc(sizeof(char)*((kl_val(it)->msize)+1));
+                 
+                  strncpy(tmp_vector[i], kl_val(it)->mdata, kl_val(it)->msize-1);
+                  tmp_vector[i][kl_val(it)->msize]='\0';
+                  tmp_vector[i][strcspn(tmp_vector[i], "\n")] = '\0'; 
+                  tmp_vector[i][strcspn(tmp_vector[i], "\r")] = '\0'; 
+                  for (int c=0;c<(sizeof(tmp_vector[i])/sizeof(tmp_vector[i][0]));c++){
+                     if ( (tmp_vector[i][c]>='A' && tmp_vector[i][c]<='Z')||(tmp_vector[i][c]>='a' && tmp_vector[i][c]<='z')||(tmp_vector[i][c]>='0' && tmp_vector[i][c]<='9')||tmp_vector[i][c]==' '||tmp_vector[i][c]==',') {
+                            /* If ASCII */
+                        } else {
+                            tmp_vector[i][c]='?';
+                        }   
+                  }
+                  it = kl_next(it);
+                }
+                if(i==important_index){
+                  label_=tmp_vector[i];
+                  printf("\nFrom %s to %s with message %s\n",agnameof(from),agnameof(to), label_);
+                }
+            }
+          
+            edge = agedge(ipsm, from, to, label_,TRUE);
+            if (dry_run){
+                agset(edge, "color", "blue");
+            } 
+            else{
+                agset(edge, "color", "red");
+            } 
+          
+		    }
         //Update prevStateID
         prevStateID = curStateID;
+
       }
+   
     }
 
     //Update the dot file
@@ -893,7 +964,10 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
   k = kh_get(hms, khms_states, 0);
   if (k != kh_end(khms_states)) {
     state = kh_val(khms_states, k);
+    
     state->seeds = (void **) ck_realloc (state->seeds, (state->seeds_count + 1) * sizeof(void *));
+
+  
     state->seeds[state->seeds_count] = (void *)q;
     state->seeds_count++;
 
@@ -1067,8 +1141,10 @@ int send_over_network()
   kliter_t(lms) *it;
   messages_sent = 0;
 
-  for (it = kl_begin(kl_messages); it != kl_end(kl_messages); it = kl_next(it)) {
+  for (it = kl_begin(kl_messages); it != kl_end(kl_messages); it = kl_next(it)) { 
     n = net_send(sockfd, timeout, kl_val(it)->mdata, kl_val(it)->msize);
+     message_sent=kl_val(it)->mdata;
+
     messages_sent++;
 
     //Allocate memory to store new accumulated response buffer size
@@ -1084,6 +1160,8 @@ int send_over_network()
     if (net_recv(sockfd, timeout, poll_wait_msecs, &response_buf, &response_buf_size)) {
       goto HANDLE_RESPONSES;
     }
+    // printf("---------------------Message sent: %s -> %s<-",message_sent,response_buf);
+    // printf("---------------------Response buf size: %d",response_bytes[messages_sent - 1]);
 
     //Update accumulated response buffer size
     response_bytes[messages_sent - 1] = response_buf_size;
@@ -5407,7 +5485,7 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
   /* AFLNet update kl_messages linked list */
 
   // parse the out_buf into messages
-  u32 region_count = 0;
+  u32 region_count;
   region_t *regions = (*extract_requests)(out_buf, len, &region_count);
   if (!region_count) PFATAL("AFLNet Region count cannot be Zero");
 
@@ -5433,6 +5511,8 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
     if (m->mdata == NULL) PFATAL("Unable to allocate memory region to store new message");
     memcpy(m->mdata, &out_buf[regions[i].start_byte], len);
 
+  
+    
     //Insert the message to the linked list
     *kl_pushp(lms, kl_messages) = m;
 
