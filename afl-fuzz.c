@@ -402,7 +402,7 @@ static FILE *ipsm_dot_file;
 
 char *message_sent;
 
-bool debug=false;
+int debug = 0;
 /* Hash table/map and list */
 klist_t(lms) * kl_messages;
 khash_t(hs32) * khs_ipsm_paths;
@@ -959,7 +959,7 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
 
           char *label_;
           int important_index = -1;
-          if (debug)
+          if (debug == 1)
             printf("\nNew edge:%s->%s\n", agnameof(from), agnameof(to));
           for (int i = 0; i < state_count; i++)
           {
@@ -968,7 +968,7 @@ void update_state_aware_variables(struct queue_entry *q, u8 dry_run)
               important_index = i;
             }
           }
-          if (debug)
+          if (debug == 1)
           {
             printf("\n[DEBUG]Messages:\n");
             int i = 0;
@@ -6588,12 +6588,12 @@ AFLNET_REGIONS_SELECTION:;
    * SIMPLE BITFLIP (+dictionary construction) *
    *********************************************/
 
-#define FLIP_BIT(_ar, _b)                   \
-  do                                        \
-  {                                         \
-    u8 *_arf = (u8 *)(_ar);                 \
-    u32 _bf = (_b);                         \
-    _arf[(_bf) >> 3] ^= (128 >> ((_bf)&7)); \
+#define FLIP_BIT(_ar, _b)                     \
+  do                                          \
+  {                                           \
+    u8 *_arf = (u8 *)(_ar);                   \
+    u32 _bf = (_b);                           \
+    _arf[(_bf) >> 3] ^= (128 >> ((_bf) & 7)); \
   } while (0)
 
   /* Single walking bit. */
