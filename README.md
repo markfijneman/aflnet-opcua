@@ -26,6 +26,10 @@ For example:
 
 allows to read from the input folder the messages to send to *my_program* and interprets the messages received from the program as *response codes*
 
+# Important Notes
+
+The extension saves the labels into the "key" field. If you want to show the label, you need to change "key" to "label". Also, .dot files don't like spaces (" ") at the end of a label, so try to get rid of them.
+
 # Licences
 
 AFLNet is licensed under [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
