@@ -4,6 +4,16 @@ This repo is a fork of the stateful Fuzzer [AFLNet](https://github.com/aflnet/af
 
 # Upgrades
 
+## OPC UA support
+Meaning of state numbers:
+* 1: ACK (Acknowledge)
+* 3: OPN (Open Secure Channel)
+* \>3: Secure Channel NodeID (different message types that can be sent over secure channels, see https://github.com/wireshark/wireshark/blob/dff1a7996125edb3aa437a4eaab0f31c43d8161d/plugins/epan/opcua/opcua_serviceids.h for a list)
+
+Negative numbers represent errors:
+* -1 = unknown message type (FreeOpcUa seems to respond with garbage data after having received a close request; but this might also be a fault caused by the abstraction function)
+* -2 = OPC UA Error (https://github.com/OPCFoundation/UA-Nodeset/blob/UA-1.05.03-2023-12-15/Schema/StatusCode.csv)
+
 ## Outputs a complete state model
 
 This version of AFLNet allows the user to export the state model of the system by integrating the labels in the edges.
