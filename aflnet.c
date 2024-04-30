@@ -866,6 +866,100 @@ region_t* extract_requests_ipp(unsigned char* buf, unsigned int buf_size, unsign
   return regions;
 }
 
+region_t* extract_requests_opcua(unsigned char* buf, unsigned int buf_size, unsigned int* region_count_ref)
+{
+  char *mem;
+  unsigned int byte_count = 0;
+  unsigned int mem_count = 0;
+  unsigned int mem_size = 1024;
+  unsigned int region_count = 0;
+  region_t *regions = NULL;
+
+  mem=(char *)ck_alloc(mem_size);
+
+  unsigned int cur_start = 0;
+  unsigned int cur_end = 0;
+  while (byte_count < buf_size) {
+    memcpy(&mem[mem_count], buf + byte_count++, 1);
+
+    // Check if region is at least 8 bytes (OPC UA header size)
+    if (mem_count >= 8) {
+      // Bytes: 1-3: message type
+      // Byte 4: chunk type
+      // Bytes 5-8: message size
+
+      // Extract message size from header
+      u32 message_size = (mem[4] & 0xff) << 0  |
+                         (mem[5] & 0xff) << 8  |
+                         (mem[6] & 0xff) << 16 |
+                         (mem[7] & 0xff) << 24;
+      
+      // Skip the payload, removing the OPC UA header (8) from the message size
+      unsigned int bytes_to_skip = message_size - 8; 
+
+      unsigned int temp_count = 0;
+      while ((byte_count < buf_size) && (temp_count < bytes_to_skip)) {
+        byte_count++;
+        cur_end++;
+        temp_count++;
+      }
+
+      if (byte_count < buf_size) {
+          byte_count--;
+          cur_end--;
+      }
+
+      // Create one region
+      region_count++;
+      regions = (region_t *)ck_realloc(regions, region_count * sizeof(region_t));
+      regions[region_count - 1].start_byte = cur_start;
+      regions[region_count - 1].end_byte = cur_end;
+      regions[region_count - 1].state_sequence = NULL;
+      regions[region_count - 1].state_count = 0;
+
+      // Check if the last byte has been reached
+      if (cur_end < buf_size - 1) {
+        mem_count = 0;
+        cur_start = cur_end + 1;
+        cur_end = cur_start;
+      }
+    } else {
+      mem_count++;
+      cur_end++;
+
+      // Check if the last byte has been reached
+      if (cur_end == buf_size - 1) {
+        region_count++;
+        regions = (region_t *)ck_realloc(regions, region_count * sizeof(region_t));
+        regions[region_count - 1].start_byte = cur_start;
+        regions[region_count - 1].end_byte = cur_end;
+        regions[region_count - 1].state_sequence = NULL;
+        regions[region_count - 1].state_count = 0;
+        break;
+      }
+
+      if (mem_count == mem_size) {
+        mem_size = mem_size * 2;
+        mem=(char *)ck_realloc(mem, mem_size);
+      }
+    }
+  }
+  if (mem) ck_free(mem);
+  
+  if ((region_count == 0) && (buf_size > 0)) {
+    regions = (region_t *)ck_realloc(regions, sizeof(region_t));
+    regions[0].start_byte = 0;
+    regions[0].end_byte = buf_size - 1;
+    regions[0].state_sequence = NULL;
+    regions[0].state_count = 0;
+
+    region_count = 1;
+  }
+
+  *region_count_ref = region_count;
+  return regions;
+}
+
 unsigned int* extract_response_codes_smtp(unsigned char* buf, unsigned int buf_size, unsigned int* state_count_ref)
 {
   char *mem;
@@ -1612,6 +1706,97 @@ unsigned int* extract_response_codes_ipp(unsigned char* buf, unsigned int buf_si
   }
 
   if (mem) ck_free(mem);
+  *state_count_ref = state_count;
+  return state_sequence;
+}
+
+unsigned int* extract_response_codes_opcua(unsigned char* buf, unsigned int buf_size, unsigned int* state_count_ref)
+{
+  char *mem;
+  unsigned int byte_count = 0;
+  unsigned int mem_count = 0;
+  unsigned int mem_size = 1024;
+  unsigned int message_type;
+  unsigned int *state_sequence = NULL;
+  unsigned int state_count = 0;
+
+  mem=(char *)ck_alloc(mem_size);
+
+  //Add initial state
+  state_count++;
+  state_sequence = (unsigned int *)ck_realloc(state_sequence, state_count * sizeof(unsigned int));
+  state_sequence[state_count - 1] = 0;
+
+  while (byte_count < buf_size) {
+    memcpy(&mem[mem_count], buf + byte_count++, 1);
+    
+    if (mem_count >= 8) {
+      // Bytes 0-2: message type
+      // Byte 3: chunk type
+      // Bytes 4-7: message size
+      
+      if ((mem[0] == 'E') && (mem[1] == 'R') && (mem[2] == 'R')) {
+        // Return same state for all ERRs.
+        message_type = -2;
+      } else if ((mem[0] == 'M') && (mem[1] == 'S') && (mem[2] == 'G')) { // Secure Channel MSG
+      	if (mem_count >= 27) {
+          message_type = (mem[27] & 0xff) * 255 + (mem[26] & 0xff); // Take NodeID Identifier Numeric
+        } else { // Increase mem and try again
+          mem_count++;
+
+	  if (mem_count == mem_size) {
+	    mem_size = mem_size * 2;
+            mem=(char *)ck_realloc(mem, mem_size);
+	  }
+	  
+	  continue;
+        }
+      } else if ((mem[0] == 'A') && (mem[1] == 'C') && (mem[2] == 'K')) { // Acknowledgement Message
+        message_type = 1;
+      } else if ((mem[0] == 'R') && (mem[1] == 'H') && (mem[2] == 'E')) { // ReverseHello Message
+        message_type = 2;
+      } else if ((mem[0] == 'O') && (mem[1] == 'P') && (mem[2] == 'N')) { // Open Secure Channel
+        message_type = 3;
+      }
+       else { // Unknown message type, server probably sent weird stuff back.
+        message_type = -1;
+      }
+
+      // Extract message size from header
+      u32 message_size = ((u32)mem[4] & 0xff) << 0  |
+                         ((u32)mem[5] & 0xff) << 8  |
+                         ((u32)mem[6] & 0xff) << 16 |
+                         ((u32)mem[7] & 0xff) << 24;
+      
+      // Skip the payload, removing the OPC UA header (8) from the message size
+      unsigned int bytes_to_skip = message_size - 8;
+      unsigned int temp_count = 0;
+      while ((byte_count < buf_size) && (temp_count < bytes_to_skip)) {
+        byte_count++;
+        temp_count++;
+      }
+
+      if (byte_count < buf_size) {
+          byte_count--;
+      }
+
+      // Add response code to array
+      unsigned int message_code = message_type;
+      state_count++;
+      state_sequence = (unsigned int *)ck_realloc(state_sequence, state_count * sizeof(unsigned int));
+      state_sequence[state_count - 1] = message_code;
+      mem_count = 0;
+    } else {
+      mem_count++;
+
+      if (mem_count == mem_size) {
+        mem_size = mem_size * 2;
+        mem=(char *)ck_realloc(mem, mem_size);
+      }
+    }
+  }
+  if (mem) ck_free(mem);
+
   *state_count_ref = state_count;
   return state_sequence;
 }
